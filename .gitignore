@@ -1,0 +1,16 @@
+.DS_Store
+DerivedData/
+build/
+*.xcarchive
+*.app
+*.dSYM/
+*.xcresult
+*.profraw
+*.profdata
+xcuserdata/
+*.xcuserstate
+.build/
+
+# Local image-generation drafts; shipped icons live in Assets.xcassets.
+/output/
+/mac-image.png

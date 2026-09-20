@@ -1,0 +1,40 @@
+name: SlideLearning
+options:
+  deploymentTarget:
+    macOS: "26.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MACOSX_DEPLOYMENT_TARGET: "26.0"
+    DEVELOPMENT_TEAM: ""
+targets:
+  SlideLearning:
+    type: application
+    platform: macOS
+    info:
+      path: SlideLearning/Info.plist
+    sources:
+      - path: SlideLearning
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.kaikuppers.SlideLearning
+        PRODUCT_NAME: SlideLearning
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.education
+        INFOPLIST_KEY_NSHumanReadableCopyright: ""
+        SWIFT_EMIT_LOC_STRINGS: YES
+    scheme:
+      gatherCoverageData: true
+      testTargets:
+        - SlideLearningTests
+  SlideLearningTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: SlideLearningTests
+    dependencies:
+      - target: SlideLearning
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.kaikuppers.SlideLearningTests
