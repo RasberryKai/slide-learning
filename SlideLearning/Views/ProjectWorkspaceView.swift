@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct ProjectWorkspaceView: View {
@@ -6,6 +7,8 @@ struct ProjectWorkspaceView: View {
     var exporter: any SlideExporting = UnavailableExportService()
     @State private var exportState: ExportState = .idle
     @State private var showingExportResult = false
+    @State private var isCopyingSlide = false
+    @State private var copyError: String?
     @FocusState private var notesFocused: Bool
 
     enum ExportState: Equatable {
@@ -13,6 +16,11 @@ struct ProjectWorkspaceView: View {
         case exporting
         case success(URL)
         case failure(String)
+    }
+
+    private var copySlideAction: (() -> Void)? {
+        guard model.project.viewPreferences.focusedPageIndex != nil, !isCopyingSlide else { return nil }
+        return { copyCurrentSlide() }
     }
 
     var body: some View {
@@ -28,6 +36,15 @@ struct ProjectWorkspaceView: View {
             }
         }
         .background(Color(nsColor: .windowBackgroundColor))
+        .focusedSceneValue(\.copySlide, copySlideAction)
+        .alert("Could not copy slide", isPresented: Binding(
+            get: { copyError != nil },
+            set: { if !$0 { copyError = nil } }
+        )) {
+            Button("OK", role: .cancel) { copyError = nil }
+        } message: {
+            Text(copyError ?? "")
+        }
         .overlay {
             WorkspaceKeyMonitor(
                 onMove: { model.dispatch(.moveFocus($0)) },
@@ -103,8 +120,9 @@ struct ProjectWorkspaceView: View {
                 Text("Large").tag(ThumbnailSize.large)
             }
             .pickerStyle(.menu)
+            .labelsHidden()
             .frame(width: 112)
-            .help("Choose thumbnail density")
+            .help("Thumbnail size")
             Text("\(model.selectedCount) of \(model.totalCount) selected")
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
@@ -130,6 +148,26 @@ struct ProjectWorkspaceView: View {
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 12)
+    }
+
+    private func copyCurrentSlide() {
+        guard !isCopyingSlide,
+              let pageIndex = model.project.viewPreferences.focusedPageIndex else { return }
+        // Capture the source page before rendering so navigation cannot change the copy target.
+        let project = model.project
+        isCopyingSlide = true
+        Task { @MainActor in
+            defer { isCopyingSlide = false }
+            guard let image = await thumbnailProvider.thumbnail(for: project, pageIndex: pageIndex, width: 2000) else {
+                copyError = "The slide image could not be rendered. Please try again."
+                return
+            }
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            if !pasteboard.writeObjects([image]) {
+                copyError = "The slide image could not be written to the clipboard. Please try again."
+            }
+        }
     }
 
     private func beginExport() {

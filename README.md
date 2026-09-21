@@ -48,6 +48,7 @@ This is a local installation workflow. **Copy App** does not notarize the app fo
 - Browse slides in the grid and select the ones you want to export.
 - Focus a slide and start typing to add notes. Press **Escape** to return to navigating slides.
 - Use the **arrow keys** to move between slides and **Space** to toggle selection when you are not editing text.
+- Press **⇧⌘C** (or choose **Edit → Copy Slide**) to copy the current slide as a high-resolution image, without notes. **⌘C** still copies selected text normally.
 - Export selected slides and their notes to a new PDF.
 
 Notes are separate from the source PDF; the app does not draw on or annotate the original file. Imported PDFs are copied into local project storage, alongside the autosaved project metadata, under:
