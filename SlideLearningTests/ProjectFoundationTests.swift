@@ -1,6 +1,10 @@
 import Foundation
 import XCTest
+#if os(iOS)
+@testable import SlideLearningIPad
+#else
 @testable import SlideLearning
+#endif
 
 final class ProjectFoundationTests: XCTestCase {
     func testFocusAndSelectionAreIndependent() {
@@ -178,5 +182,50 @@ final class ProjectStoreTests: XCTestCase {
         XCTAssertEqual(summaries.first?.id, project.id)
         XCTAssertTrue(FileManager.default.fileExists(atPath: index.path))
         try? FileManager.default.removeItem(at: root)
+    }
+
+    @MainActor
+    func testCloseProjectKeepsEditsWhenFinalFlushFailsAndRecovers() async throws {
+        let (store, root, source) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let app = AppViewModel(
+            store: store,
+            thumbnailProvider: PDFThumbnailProvider(
+                cacheDirectory: root.appendingPathComponent("thumbnail-cache")
+            )
+        )
+        await app.importProject(from: source)
+        let active = try XCTUnwrap(app.activeProject)
+        let projectID = active.project.id
+        let managedSource = await store.sourceURL(id: projectID)
+        let movedSource = managedSource.deletingLastPathComponent()
+            .appendingPathComponent("source.pdf.moved")
+        try FileManager.default.moveItem(at: managedSource, to: movedSource)
+        defer {
+            if !FileManager.default.fileExists(atPath: managedSource.path),
+               FileManager.default.fileExists(atPath: movedSource.path) {
+                try? FileManager.default.moveItem(at: movedSource, to: managedSource)
+            }
+        }
+
+        active.dispatch(.updateNote(pageIndex: 1, text: "Unsaved context"))
+        app.closeProject()
+        await app.flushActiveProject()
+
+        XCTAssertEqual(app.screen, .project(projectID))
+        XCTAssertTrue(app.activeProject === active)
+        XCTAssertEqual(active.project.slides[1].note, "Unsaved context")
+        XCTAssertEqual(active.error, .projectUnavailable(.missingSource))
+
+        try FileManager.default.moveItem(at: movedSource, to: managedSource)
+        app.closeProject()
+        await app.flushActiveProject()
+
+        XCTAssertEqual(app.screen, .recentProjects)
+        XCTAssertNil(app.activeProject)
+
+        let recovered = try await store.loadProject(id: projectID)
+        XCTAssertEqual(recovered.slides[1].note, "Unsaved context")
     }
 }

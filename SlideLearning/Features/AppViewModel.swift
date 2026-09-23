@@ -55,12 +55,22 @@ final class AppViewModel: ObservableObject {
         guard pendingCloseFlush == nil else { return }
         let project = activeProject
         let flush = Task { [weak self] in
-            await project?.flush()
-            guard let self, self.activeProject === project else { return }
+            let didFlush = await project?.flush() ?? true
+            guard let self else { return }
+            guard self.activeProject === project else {
+                self.pendingCloseFlush = nil
+                return
+            }
+            guard didFlush else {
+                // Keep the workspace alive so the user can see the save error
+                // and retry after the storage problem is fixed.
+                self.pendingCloseFlush = nil
+                return
+            }
             self.activeProject = nil
             self.screen = .recentProjects
-            await self.refreshRecentProjects()
             self.pendingCloseFlush = nil
+            await self.refreshRecentProjects()
         }
         pendingCloseFlush = flush
     }

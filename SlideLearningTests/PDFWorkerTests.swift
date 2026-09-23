@@ -3,7 +3,11 @@ import CoreText
 import Foundation
 import PDFKit
 import XCTest
+#if os(iOS)
+@testable import SlideLearningIPad
+#else
 @testable import SlideLearning
+#endif
 
 final class PDFWorkerTests: XCTestCase {
     private var temporaryDirectory: URL!
@@ -176,6 +180,25 @@ final class PDFWorkerTests: XCTestCase {
         XCTAssertTrue(output.page(at: 2)?.string?.contains("Source slide 3") == true)
         XCTAssertTrue(output.page(at: 2)?.string?.contains("Second landscape source text") == true)
         XCTAssertTrue(bounds.allSatisfy { abs($0.height - (($0.width == 360 ? 640 : 360) + 26)) < 0.1 })
+    }
+
+    func testThumbnailsRenderAndReloadFromDiskCache() async throws {
+        let source = try makePDF(pageCount: 2, name: "thumbnails.pdf")
+        let cache = temporaryDirectory.appendingPathComponent("thumbnail-cache")
+        let provider = PDFThumbnailProvider(cacheDirectory: cache)
+        let first = try await provider.thumbnail(sourceURL: source, pageIndex: 1,
+                                                  size: CGSize(width: 160, height: 100))
+        XCTAssertEqual(first.pageIndex, 1)
+        XCTAssertGreaterThan(first.image.size.width, 0)
+        XCTAssertGreaterThan(first.image.size.height, 0)
+        let files = try FileManager.default.contentsOfDirectory(at: cache, includingPropertiesForKeys: nil)
+        XCTAssertEqual(files.count, 1)
+        let reloadedProvider = PDFThumbnailProvider(cacheDirectory: cache)
+        let reloaded = try await reloadedProvider.thumbnail(sourceURL: source, pageIndex: 1,
+                                                            size: CGSize(width: 160, height: 100))
+        XCTAssertEqual(reloaded.image.size, first.image.size)
+        await reloadedProvider.removeCachedThumbnails(for: source)
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: cache.path).isEmpty)
     }
 
     private func makePDF(pageCount: Int, name: String, directory: URL? = nil) throws -> URL {

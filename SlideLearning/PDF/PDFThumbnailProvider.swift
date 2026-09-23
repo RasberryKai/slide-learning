@@ -1,11 +1,17 @@
+#if canImport(AppKit)
 import AppKit
+typealias PlatformImage = NSImage
+#else
+import UIKit
+typealias PlatformImage = UIImage
+#endif
 import CoreGraphics
 import CryptoKit
 import Foundation
 import PDFKit
 
 struct PDFThumbnail: @unchecked Sendable {
-    let image: NSImage
+    let image: PlatformImage
     let pageIndex: Int
 }
 
@@ -41,7 +47,7 @@ actor PDFThumbnailProvider {
         if let thumbnail = memoryCache[cacheKey] {
             return thumbnail
         }
-        if let image = NSImage(contentsOf: cacheURL) {
+        if let image = cachedImage(at: cacheURL) {
             let thumbnail = PDFThumbnail(image: image, pageIndex: pageIndex)
             memoryCache[cacheKey] = thumbnail
             return thumbnail
@@ -58,7 +64,7 @@ actor PDFThumbnailProvider {
                 throw PDFThumbnailError.unreadableSource
             }
             let thumbnailSize = CGSize(width: size.width * scale, height: size.height * scale)
-            guard let image = page.thumbnail(of: thumbnailSize, for: .cropBox) as NSImage? else {
+            guard let image = page.thumbnail(of: thumbnailSize, for: .cropBox) as PlatformImage? else {
                 throw PDFThumbnailError.renderFailed
             }
             return PDFThumbnail(image: image, pageIndex: pageIndex)
@@ -102,13 +108,25 @@ actor PDFThumbnailProvider {
         return "\(size)-\(modified.timeIntervalSince1970)"
     }
 
-    private func store(_ image: NSImage, at url: URL) throws {
+    private func cachedImage(at url: URL) -> PlatformImage? {
+        #if canImport(AppKit)
+        NSImage(contentsOf: url)
+        #else
+        UIImage(contentsOfFile: url.path)
+        #endif
+    }
+
+    private func store(_ image: PlatformImage, at url: URL) throws {
         try fileManager.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+        #if canImport(AppKit)
         guard let tiff = image.tiffRepresentation,
               let bitmap = NSBitmapImageRep(data: tiff),
               let data = bitmap.representation(using: .png, properties: [:]) else {
             throw PDFThumbnailError.renderFailed
         }
+        #else
+        guard let data = image.pngData() else { throw PDFThumbnailError.renderFailed }
+        #endif
         try data.write(to: url, options: .atomic)
     }
 }

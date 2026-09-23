@@ -28,19 +28,28 @@ final class ProjectViewModel: ObservableObject {
         scheduleSave()
     }
 
-    func flush() async {
-        saveTask?.cancel()
+    @discardableResult
+    func flush() async -> Bool {
+        let pendingSave = saveTask
+        saveTask = nil
+        pendingSave?.cancel()
+        await pendingSave?.value
+
         let project = project
         isSaving = true
         do {
             try await store.save(project)
             isSaving = false
+            error = nil
+            return true
         } catch let error as ProjectError {
             self.error = error
             isSaving = false
+            return false
         } catch {
             self.error = .storageFailed(error.localizedDescription)
             isSaving = false
+            return false
         }
     }
 
@@ -52,7 +61,10 @@ final class ProjectViewModel: ObservableObject {
             do {
                 try await Task.sleep(for: .milliseconds(300))
                 try await store.save(snapshot)
-                await MainActor.run { self?.isSaving = false }
+                await MainActor.run {
+                    self?.isSaving = false
+                    self?.error = nil
+                }
             } catch is CancellationError {
                 return
             } catch let error as ProjectError {

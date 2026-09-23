@@ -1,12 +1,12 @@
 # Slide Learning
 
-A native macOS app for studying PDF slides. Browse a thumbnail overview, select slides, and write plain-text notes next to each slide. Projects autosave locally, and you can export selected slides with their notes as a PDF.
+A native macOS and iPad app for studying PDF slides. Browse a thumbnail overview, select slides, and write plain-text notes next to each slide. Projects autosave locally, and you can export selected slides with their notes as a PDF.
 
 Built with SwiftUI and PDFKit. No account or third-party dependencies required.
 
 ## Requirements
 
-- macOS 26 or later.
+- macOS 26 or later, or iPadOS 18 or later.
 - Xcode 26 or later (build verified with Xcode 26.6).
 
 The Xcode project is included. You do **not** need XcodeGen to build or install the app.
@@ -45,13 +45,13 @@ This is a local installation workflow. **Copy App** does not notarize the app fo
 ## Using the app
 
 - Import a PDF to create a project.
-- Browse slides in the grid and select the ones you want to export.
+- Browse slides in the thumbnail sidebar and select the ones you want to export.
 - Focus a slide and start typing to add notes. Press **Escape** to return to navigating slides.
 - Use the **arrow keys** to move between slides and **Space** to toggle selection when you are not editing text.
-- Press **⇧⌘C** (or choose **Edit → Copy Slide**) to copy the current slide as a high-resolution image, without notes. **⌘C** still copies selected text normally.
+- On Mac, press **⇧⌘C** (or choose **Edit → Copy Slide**) to copy the current slide as a high-resolution image, without notes. **⌘C** still copies selected text normally.
 - Export selected slides and their notes to a new PDF.
 
-Notes are separate from the source PDF; the app does not draw on or annotate the original file. Imported PDFs are copied into local project storage, alongside the autosaved project metadata, under:
+Notes are separate from the source PDF; the app does not draw on or annotate the original file. On Mac, imported PDFs are copied into local project storage, alongside the autosaved project metadata, under:
 
 ```text
 ~/Library/Application Support/Slide Learning/
@@ -82,3 +82,21 @@ xcodegen generate
 ```
 
 See [FEATURE_SPEC.md](FEATURE_SPEC.md) for the detailed product specification.
+
+## iPad version
+
+Select the **SlideLearningIPad** scheme in the same Xcode project, then choose an iPad simulator and run. To install on your own iPad, select that device and choose your signing team under the iPad target's **Signing & Capabilities**.
+
+The iPad interface supports portrait and landscape, Files PDF import, slide selection, plain-text notes, local autosave, and PDF sharing (including Save to Files). Tap a thumbnail to focus it; use its checkmark control to include or exclude it. Notes automatically select a slide when non-whitespace text is first entered. The notes toggle makes more room for the PDF.
+
+Projects are stored privately in each app's local Application Support directory. The Mac and iPad libraries are independent; this version does not sync projects between devices.
+
+Run the shared persistence, selection, PDF validation, export, and thumbnail tests on an iPad simulator:
+
+```sh
+xcodebuild -project SlideLearning.xcodeproj \
+  -scheme SlideLearningIPad \
+  -destination 'platform=iOS Simulator,name=iPad Pro 13-inch (M5)' test
+```
+
+See [IPAD_IMPLEMENTATION.md](IPAD_IMPLEMENTATION.md) for scope and verification evidence.

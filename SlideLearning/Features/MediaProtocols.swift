@@ -1,13 +1,12 @@
 import Foundation
-import AppKit
 
 @MainActor
 protocol SlideThumbnailProviding {
-    func thumbnail(for project: Project, pageIndex: Int, width: Double) async -> NSImage?
+    func thumbnail(for project: Project, pageIndex: Int, width: Double) async -> PlatformImage?
 }
 
 struct PlaceholderThumbnailProvider: SlideThumbnailProviding {
-    func thumbnail(for project: Project, pageIndex: Int, width: Double) async -> NSImage? { nil }
+    func thumbnail(for project: Project, pageIndex: Int, width: Double) async -> PlatformImage? { nil }
 }
 
 /// UI-facing adapter. The PDF worker remains responsible for PDFKit and cache details.
@@ -21,7 +20,7 @@ struct PDFWorkerThumbnailAdapter: SlideThumbnailProviding {
         self.provider = provider
     }
 
-    func thumbnail(for project: Project, pageIndex: Int, width: Double) async -> NSImage? {
+    func thumbnail(for project: Project, pageIndex: Int, width: Double) async -> PlatformImage? {
         do {
             let source = await store.sourceURL(id: project.id)
             let result = try await provider.thumbnail(
