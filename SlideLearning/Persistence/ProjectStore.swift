@@ -4,8 +4,22 @@ private struct RecentProjectsFile: Codable, Sendable {
     var projects: [ProjectSummary]
 }
 
+private func defaultSlideLearningRootURL() -> URL {
+    FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("Slide Learning", isDirectory: true)
+}
+
+/// The durable project library. The actor serializes this process's work;
+/// NSFileCoordinator calls additionally serialize access with iCloud Drive and
+/// other processes using the selected folder.
 actor ProjectStore {
-    let rootURL: URL
+    private let localRootURL: URL
+    private var activeRootURL: URL
+    private let bookmarkStore: SecurityScopedBookmarkStore
+    private var startedScopedAccessURL: URL?
+    private var storageBlocked = false
+    private(set) var sharedLibraryStatus: SharedLibraryStatus = .local
+
     private let validator: any PDFValidating
     private let fileManager: FileManager
     private let now: @Sendable () -> Date
@@ -13,13 +27,18 @@ actor ProjectStore {
     private let decoder: JSONDecoder
 
     init(
-        rootURL: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Slide Learning", isDirectory: true),
+        rootURL: URL = defaultSlideLearningRootURL(),
         validator: any PDFValidating = PDFKitValidator(),
         fileManager: FileManager = .default,
-        now: @escaping @Sendable () -> Date = { Date() }
+        now: @escaping @Sendable () -> Date = { Date() },
+        bookmarkURL: URL? = nil
     ) {
-        self.rootURL = rootURL
+        self.localRootURL = rootURL
+        self.activeRootURL = rootURL
+        self.bookmarkStore = SecurityScopedBookmarkStore(
+            bookmarkURL: bookmarkURL ?? rootURL.appendingPathComponent(".shared-library.bookmark"),
+            fileManager: fileManager
+        )
         self.validator = validator
         self.fileManager = fileManager
         self.now = now
@@ -32,10 +51,122 @@ actor ProjectStore {
         self.decoder = decoder
     }
 
-    var projectsURL: URL { rootURL.appendingPathComponent("Projects", isDirectory: true) }
-    var recentIndexURL: URL { rootURL.appendingPathComponent("recent-projects.json") }
+    /// Kept source-compatible for PDF workers and tests. It always reflects
+    /// the currently selected library root.
+    var rootURL: URL { activeRootURL }
+    var projectsURL: URL { activeRootURL.appendingPathComponent("Projects", isDirectory: true) }
+    var recentIndexURL: URL { activeRootURL.appendingPathComponent("recent-projects.json") }
+
+    func currentSharedLibraryStatus() -> SharedLibraryStatus { sharedLibraryStatus }
+
+    /// Persists the user's selected folder bookmark and migrates the local
+    /// library by copy. The source library is never moved or removed.
+    func selectSharedLibrary(at url: URL) async throws -> SharedLibraryStatus {
+        // Keep the picker URL itself: rebuilding it can discard its security scope.
+        let selectedURL = url
+        let didStartAccessing = selectedURL.startAccessingSecurityScopedResource()
+        guard selectedURL.isFileURL,
+              fileManager.fileExists(atPath: selectedURL.path),
+              (try? selectedURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else {
+            if didStartAccessing { selectedURL.stopAccessingSecurityScopedResource() }
+            throw ProjectError.storageFailed("The selected shared library folder is unavailable.")
+        }
+
+        do {
+            if selectedURL.standardizedFileURL == activeRootURL.standardizedFileURL {
+                try bookmarkStore.save(for: selectedURL)
+                if didStartAccessing {
+                    stopScopedAccess()
+                    startedScopedAccessURL = selectedURL
+                }
+                activeRootURL = selectedURL
+                storageBlocked = false
+                sharedLibraryStatus = .shared(selectedURL)
+                return sharedLibraryStatus
+            }
+
+            let migrationSource = activeRootURL
+            try migrateLibrary(from: migrationSource, to: selectedURL)
+            try bookmarkStore.save(for: selectedURL)
+
+            stopScopedAccess()
+            activeRootURL = selectedURL
+            startedScopedAccessURL = didStartAccessing ? selectedURL : nil
+            storageBlocked = false
+            sharedLibraryStatus = .shared(selectedURL)
+            return sharedLibraryStatus
+        } catch let error as ProjectError {
+            if didStartAccessing { selectedURL.stopAccessingSecurityScopedResource() }
+            throw error
+        } catch {
+            if didStartAccessing { selectedURL.stopAccessingSecurityScopedResource() }
+            throw ProjectError.storageFailed("Could not prepare the shared library: \(error.localizedDescription)")
+        }
+    }
+
+    /// Restores the previously selected folder. A stale bookmark is refreshed
+    /// against the resolved URL. If a saved bookmark cannot be restored, the
+    /// store becomes blocked instead of silently showing local data.
+    func restoreSharedLibrary() async -> SharedLibraryStatus {
+        guard fileManager.fileExists(atPath: bookmarkStore.bookmarkURL.path) else {
+            sharedLibraryStatus = .needsSelection
+            storageBlocked = false
+            return sharedLibraryStatus
+        }
+
+        do {
+            let resolved = try bookmarkStore.resolve()
+            // Preserve the security scope carried by the resolved bookmark URL.
+            let selectedURL = resolved.url
+            let didStartAccessing = selectedURL.startAccessingSecurityScopedResource()
+            do {
+                guard selectedURL.isFileURL,
+                      fileManager.fileExists(atPath: selectedURL.path),
+                      (try? selectedURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else {
+                    throw CocoaError(.fileNoSuchFile, userInfo: [NSFilePathErrorKey: selectedURL.path])
+                }
+
+                if resolved.isStale {
+                    try bookmarkStore.save(for: selectedURL)
+                }
+                stopScopedAccess()
+                activeRootURL = selectedURL
+                startedScopedAccessURL = didStartAccessing ? selectedURL : nil
+                storageBlocked = false
+                sharedLibraryStatus = .shared(selectedURL)
+            } catch {
+                if didStartAccessing { selectedURL.stopAccessingSecurityScopedResource() }
+                throw error
+            }
+        } catch {
+            storageBlocked = true
+            sharedLibraryStatus = .unavailable(
+                "The shared Slide Learning folder could not be restored. Select it again to continue."
+            )
+        }
+        return sharedLibraryStatus
+    }
+
+    /// Removes only this device's bookmark and returns to its retained local
+    /// library. Shared files are intentionally left untouched.
+    func clearSharedLibrary() async {
+        stopScopedAccess()
+        if fileManager.fileExists(atPath: bookmarkStore.bookmarkURL.path) {
+            try? fileManager.removeItem(at: bookmarkStore.bookmarkURL)
+        }
+        activeRootURL = localRootURL
+        storageBlocked = false
+        sharedLibraryStatus = .local
+    }
 
     func createProject(from sourceURL: URL) async throws -> Project {
+        try ensureStorageAvailable()
+        do {
+            try CoordinatedFileAccess.materializeIfNeeded(sourceURL, using: fileManager)
+        } catch {
+            throw ProjectError.invalidPDF
+        }
+
         let validation: PDFValidationResult
         do {
             validation = try await validator.validate(sourceURL)
@@ -71,17 +202,19 @@ actor ProjectStore {
         do {
             try fileManager.createDirectory(at: stagingURL, withIntermediateDirectories: true)
             let copiedSourceURL = stagingURL.appendingPathComponent("source.pdf")
-            try fileManager.copyItem(at: sourceURL, to: copiedSourceURL)
+            try CoordinatedFileAccess.copy(from: sourceURL, to: copiedSourceURL, using: fileManager)
             // Validate the managed copy as well as the caller's URL. This
-            // protects against a truncated or otherwise incomplete copy
-            // becoming the project's permanent source.
+            // protects against a truncated provider transfer becoming the
+            // project's permanent source.
             let copiedValidation = try await validator.validate(copiedSourceURL)
             guard copiedValidation.pageCount == validation.pageCount else {
                 throw ProjectError.invalidPDF
             }
             try writeProjectFile(project, in: stagingURL)
             try fileManager.createDirectory(at: projectsURL, withIntermediateDirectories: true)
-            try fileManager.moveItem(at: stagingURL, to: finalURL)
+            try CoordinatedFileAccess.write(finalURL) { _ in
+                try fileManager.moveItem(at: stagingURL, to: finalURL)
+            }
             try updateRecentIndex(with: ProjectSummary(project: project))
             return project
         } catch let error as ProjectError {
@@ -94,13 +227,25 @@ actor ProjectStore {
     }
 
     func openProject(id: UUID) async throws -> Project {
-        var project = try await loadProject(id: id)
-        project.lastOpenedAt = now()
-        try save(project)
-        return project
+        let loaded = try await loadProject(id: id)
+        var opened = loaded
+        opened.lastOpenedAt = now()
+        do {
+            try save(opened, expectedProject: loaded)
+            return opened
+        } catch let error as ProjectError {
+            // Another process may have edited the project. Show the newest
+            // state instead of replacing its actual edits.
+            if case .storageFailed(let message) = error,
+               message.contains("changed since it was opened") {
+                return try await loadProject(id: id)
+            }
+            throw error
+        }
     }
 
     func loadProject(id: UUID) async throws -> Project {
+        try ensureStorageAvailable()
         let directory = projectDirectoryURL(id: id)
         guard fileManager.fileExists(atPath: directory.path) else {
             throw ProjectError.projectUnavailable(.missingProject)
@@ -114,109 +259,275 @@ actor ProjectStore {
         return project
     }
 
-    func save(_ project: Project) throws {
+    /// `expectedProject` is the last project version observed by the caller.
+    /// A mismatch means another device/process has edited the project. Dirty
+    /// local state is written to a conflict sidecar before the error is
+    /// returned, so the user's notes remain recoverable.
+    func save(_ project: Project, expectedProject: Project? = nil) throws {
+        try ensureStorageAvailable()
         _ = try project.validated()
         let directory = projectDirectoryURL(id: project.id)
-        guard fileManager.fileExists(atPath: sourceURL(id: project.id).path) else {
+        let source = sourceURL(id: project.id)
+        guard fileManager.fileExists(atPath: source.path) else {
             throw ProjectError.projectUnavailable(.missingSource)
         }
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-        try writeProjectFile(project, in: directory)
-        try updateRecentIndex(with: ProjectSummary(project: project))
+
+        var projectToSave = project
+        let metadata = directory.appendingPathComponent("project.json")
+        do {
+            try CoordinatedFileAccess.write(metadata) { coordinatedMetadata in
+                let current = readProjectMetadataUncoordinated(
+                    id: project.id,
+                    primaryURL: coordinatedMetadata,
+                    allowBackup: true
+                )
+                if let expectedProject,
+                   let current,
+                   differsInDurableContent(current, from: expectedProject),
+                   differsInDurableContent(current, from: project) {
+                    let localIsDirty = differsMeaningfully(project, from: expectedProject)
+                    if localIsDirty {
+                        try writeConflictCopy(project, in: directory)
+                    }
+                    let message = localIsDirty
+                        ? "Your edits were preserved in a conflict copy."
+                        : "Reload it before saving again."
+                    throw ProjectError.storageFailed("Project changed since it was opened. \(message)")
+                }
+
+                if let current {
+                    // Opening a project updates only lastOpenedAt. Preserve a
+                    // newer value written by another device without treating
+                    // it as an edit to notes, selections, or preferences.
+                    projectToSave.lastOpenedAt = max(projectToSave.lastOpenedAt, current.lastOpenedAt)
+                }
+                let encoded = try encoder.encode(projectToSave)
+                try AtomicFileWriter.writeUncoordinated(encoded, to: coordinatedMetadata, using: fileManager)
+            }
+        } catch let error as ProjectError {
+            throw error
+        } catch {
+            throw ProjectError.storageFailed("Could not save project: \(error.localizedDescription)")
+        }
+        try updateRecentIndex(with: ProjectSummary(project: projectToSave))
     }
 
     func listRecentProjects() async throws -> [ProjectSummary] {
-        var index = try readRecentIndex()
-        let indexedIDs = Set(index.projects.map(\.id))
-        var changed = false
-        if fileManager.fileExists(atPath: projectsURL.path),
-           let directories = try? fileManager.contentsOfDirectory(at: projectsURL, includingPropertiesForKeys: [.isDirectoryKey]) {
-            for directory in directories {
-                guard !directory.lastPathComponent.hasPrefix(".staging-"),
-                      let id = UUID(uuidString: directory.lastPathComponent),
-                      !indexedIDs.contains(id) else { continue }
-                guard let project = try? recoverProjectMetadata(id: id).project else { continue }
-                var discovered = ProjectSummary(project: project)
-                discovered.availability = await sourceAvailability(id: id, pageCount: project.pageCount)
-                index.projects.append(discovered)
-                changed = true
-            }
-        }
+        try ensureStorageAvailable()
+        _ = try modifyRecentIndexLocked { reconcileRecentIndex(RecentProjectsFile(projects: $0)) }
 
+        let index = try readRecentIndex()
         var refreshed: [ProjectSummary] = []
         refreshed.reserveCapacity(index.projects.count)
         for record in index.projects {
             refreshed.append(await refreshSummary(record))
         }
-        if changed || refreshed != index.projects {
-            index.projects = refreshed
-            try writeRecentIndex(index)
+
+        let final = try modifyRecentIndexLocked { current in
+            var merged = reconcileRecentIndex(RecentProjectsFile(projects: current))
+            var byID = Dictionary(uniqueKeysWithValues: merged.projects.map { ($0.id, $0) })
+            for summary in refreshed { byID[summary.id] = summary }
+            merged.projects = Array(byID.values)
+            return merged
         }
-        return refreshed.sorted { $0.lastOpenedAt > $1.lastOpenedAt }
+        return final.projects.sorted { $0.lastOpenedAt > $1.lastOpenedAt }
     }
 
     func deleteProject(id: UUID) throws {
+        try ensureStorageAvailable()
         let directory = projectDirectoryURL(id: id)
         if fileManager.fileExists(atPath: directory.path) {
-            do { try fileManager.removeItem(at: directory) }
-            catch { throw ProjectError.storageFailed("Could not delete the project: \(error.localizedDescription)") }
+            do {
+                try CoordinatedFileAccess.write(directory, options: [.forDeleting]) { _ in
+                    try fileManager.removeItem(at: directory)
+                }
+            } catch {
+                throw ProjectError.storageFailed("Could not delete the project: \(error.localizedDescription)")
+            }
         }
-        var index = try readRecentIndex()
-        index.projects.removeAll { $0.id == id }
-        try writeRecentIndex(index)
+        _ = try modifyRecentIndexLocked { index in
+            var projects = index
+            projects.removeAll { $0.id == id }
+            return RecentProjectsFile(projects: projects)
+        }
     }
 
     func sourceURL(id: UUID) -> URL { projectDirectoryURL(id: id).appendingPathComponent("source.pdf") }
 
-    private func projectDirectoryURL(id: UUID) -> URL { projectsURL.appendingPathComponent(id.uuidString, isDirectory: true) }
-    private func metadataURL(id: UUID) -> URL { projectDirectoryURL(id: id).appendingPathComponent("project.json") }
+    // MARK: - Shared-library migration
+
+    private func migrateLibrary(from sourceRoot: URL, to targetRoot: URL) throws {
+        let sourceProjects = sourceRoot.appendingPathComponent("Projects", isDirectory: true)
+        let targetProjects = targetRoot.appendingPathComponent("Projects", isDirectory: true)
+        try fileManager.createDirectory(at: targetProjects, withIntermediateDirectories: true)
+        guard fileManager.fileExists(atPath: sourceProjects.path) else {
+            try rebuildRecentIndex(at: targetRoot)
+            return
+        }
+
+        let folders = try fileManager.contentsOfDirectory(
+            at: sourceProjects,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        )
+        for sourceFolder in folders {
+            guard (try? sourceFolder.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true,
+                  !sourceFolder.lastPathComponent.hasPrefix(".staging-"),
+                  let id = UUID(uuidString: sourceFolder.lastPathComponent) else { continue }
+
+            let targetFolder = targetProjects.appendingPathComponent(id.uuidString, isDirectory: true)
+            if !fileManager.fileExists(atPath: targetFolder.path) {
+                try copyProjectFolder(from: sourceFolder, to: targetFolder, in: targetProjects)
+                continue
+            }
+
+            let localProject = try? readProjectMetadata(at: sourceFolder, id: id)
+            let sharedProject = try? readProjectMetadata(at: targetFolder, id: id)
+            let sameSource = fileManager.contentsEqual(
+                atPath: sourceFolder.appendingPathComponent("source.pdf").path,
+                andPath: targetFolder.appendingPathComponent("source.pdf").path
+            )
+            if let localProject, let sharedProject, localProject == sharedProject, sameSource {
+                continue
+            }
+
+            // Never overwrite a divergent shared project. Preserve the local
+            // copy under a fresh ID so both devices' notes remain available.
+            guard let localProject else { continue }
+            let cloneID = UUID()
+            let clone = Project(
+                id: cloneID,
+                name: "\(localProject.name) (Local Copy)",
+                sourceFilename: localProject.sourceFilename,
+                pageCount: localProject.pageCount,
+                createdAt: localProject.createdAt,
+                updatedAt: localProject.updatedAt,
+                lastOpenedAt: localProject.lastOpenedAt,
+                slides: localProject.slides,
+                viewPreferences: localProject.viewPreferences
+            )
+            try copyProjectFolder(
+                from: sourceFolder,
+                to: targetProjects.appendingPathComponent(cloneID.uuidString, isDirectory: true),
+                in: targetProjects,
+                replacingMetadataWith: clone
+            )
+        }
+        try rebuildRecentIndex(at: targetRoot)
+    }
+
+    private func copyProjectFolder(
+        from sourceFolder: URL,
+        to targetFolder: URL,
+        in targetProjects: URL,
+        replacingMetadataWith project: Project? = nil
+    ) throws {
+        let staging = targetProjects.appendingPathComponent(".staging-\(UUID().uuidString)", isDirectory: true)
+        do {
+            try fileManager.createDirectory(at: staging, withIntermediateDirectories: true)
+            let source = sourceFolder.appendingPathComponent("source.pdf")
+            let destination = staging.appendingPathComponent("source.pdf")
+            guard fileManager.fileExists(atPath: source.path) else {
+                throw ProjectError.projectUnavailable(.missingSource)
+            }
+            try CoordinatedFileAccess.copy(from: source, to: destination, using: fileManager)
+
+            let sourceID = UUID(uuidString: sourceFolder.lastPathComponent)!
+            let metadataProject = try project ?? readProjectMetadata(at: sourceFolder, id: sourceID)
+            try writeProjectFile(metadataProject, in: staging)
+            try CoordinatedFileAccess.write(targetFolder) { _ in
+                try fileManager.moveItem(at: staging, to: targetFolder)
+            }
+        } catch {
+            if fileManager.fileExists(atPath: staging.path) { try? fileManager.removeItem(at: staging) }
+            throw error
+        }
+    }
+
+    private func rebuildRecentIndex(at root: URL) throws {
+        let indexURL = root.appendingPathComponent("recent-projects.json")
+        let projectsRoot = root.appendingPathComponent("Projects", isDirectory: true)
+        let existing = readRecentIndexUncoordinated(at: indexURL) ?? RecentProjectsFile(projects: [])
+        let merged = reconcileRecentIndex(existing, projectsRoot: projectsRoot)
+        do {
+            try AtomicFileWriter.write(encoder.encode(merged), to: indexURL, using: fileManager)
+        } catch {
+            throw ProjectError.storageFailed("Could not save recent projects: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - Metadata and recent index
+
+    private func projectDirectoryURL(id: UUID) -> URL {
+        projectsURL.appendingPathComponent(id.uuidString, isDirectory: true)
+    }
+
+    private func metadataURL(id: UUID) -> URL {
+        projectDirectoryURL(id: id).appendingPathComponent("project.json")
+    }
 
     private func writeProjectFile(_ project: Project, in directory: URL) throws {
         let data = try encoder.encode(project)
-        do { try AtomicFileWriter.write(data, to: directory.appendingPathComponent("project.json"), using: fileManager) }
-        catch { throw ProjectError.storageFailed("Could not save project: \(error.localizedDescription)") }
+        do {
+            try AtomicFileWriter.write(data, to: directory.appendingPathComponent("project.json"), using: fileManager)
+        } catch {
+            throw ProjectError.storageFailed("Could not save project: \(error.localizedDescription)")
+        }
     }
 
     private func readRecentIndex() throws -> RecentProjectsFile {
-        guard fileManager.fileExists(atPath: recentIndexURL.path) else {
-            if let backup = try? Data(contentsOf: recentIndexURL.appendingPathExtension("bak")),
+        let indexURL = recentIndexURL
+        guard fileManager.fileExists(atPath: indexURL.path) else {
+            if let backup = try? CoordinatedFileAccess.read(indexURL.appendingPathExtension("bak"), { try Data(contentsOf: $0) }),
                let recovered = try? decoder.decode(RecentProjectsFile.self, from: backup) {
-                try? AtomicFileWriter.restore(backup, to: recentIndexURL, using: fileManager)
+                try? AtomicFileWriter.restore(backup, to: indexURL, using: fileManager)
                 return recovered
             }
             return RecentProjectsFile(projects: [])
         }
-        do {
-            return try decoder.decode(RecentProjectsFile.self, from: Data(contentsOf: recentIndexURL))
-        } catch {
-            let backupURL = recentIndexURL.appendingPathExtension("bak")
-            if let backup = try? Data(contentsOf: backupURL),
-               let recovered = try? decoder.decode(RecentProjectsFile.self, from: backup) {
-                do { try AtomicFileWriter.restore(backup, to: recentIndexURL, using: fileManager) }
-                catch { throw ProjectError.storageFailed("Could not restore recent projects: \(error.localizedDescription)") }
-                return recovered
-            }
-            // A corrupt index should not hide otherwise valid project folders;
-            // listRecentProjects() reconciles those folders below.
-            return RecentProjectsFile(projects: [])
+        if let data = try? CoordinatedFileAccess.read(indexURL, { try Data(contentsOf: $0) }),
+           let decoded = try? decoder.decode(RecentProjectsFile.self, from: data) {
+            return decoded
         }
+        let backupURL = indexURL.appendingPathExtension("bak")
+        if let backup = try? CoordinatedFileAccess.read(backupURL, { try Data(contentsOf: $0) }),
+           let recovered = try? decoder.decode(RecentProjectsFile.self, from: backup) {
+            do { try AtomicFileWriter.restore(backup, to: indexURL, using: fileManager) }
+            catch { throw ProjectError.storageFailed("Could not restore recent projects: \(error.localizedDescription)") }
+            return recovered
+        }
+        // A corrupt index must not hide otherwise valid project folders;
+        // listRecentProjects() reconciles those folders below.
+        return RecentProjectsFile(projects: [])
+    }
+
+    private func readRecentIndexUncoordinated(at indexURL: URL) -> RecentProjectsFile? {
+        if let data = try? Data(contentsOf: indexURL),
+           let decoded = try? decoder.decode(RecentProjectsFile.self, from: data) {
+            return decoded
+        }
+        let backupURL = indexURL.appendingPathExtension("bak")
+        guard let data = try? Data(contentsOf: backupURL) else { return nil }
+        return try? decoder.decode(RecentProjectsFile.self, from: data)
     }
 
     private func recoverProjectMetadata(id: UUID) throws -> (project: Project, recovered: Bool) {
         let primaryURL = metadataURL(id: id)
         let backupURL = primaryURL.appendingPathExtension("bak")
         guard fileManager.fileExists(atPath: primaryURL.path) else {
-            if let backup = try? Data(contentsOf: backupURL),
+            if let backup = try? CoordinatedFileAccess.read(backupURL, { try Data(contentsOf: $0) }),
                let recovered = try? decoder.decode(Project.self, from: backup).validated() {
                 try? AtomicFileWriter.restore(backup, to: primaryURL, using: fileManager)
                 return (recovered, true)
             }
             throw ProjectError.projectUnavailable(.unreadableMetadata)
         }
-        if let project = try? decoder.decode(Project.self, from: Data(contentsOf: primaryURL)).validated() {
+        if let data = try? CoordinatedFileAccess.read(primaryURL, { try Data(contentsOf: $0) }),
+           let project = try? decoder.decode(Project.self, from: data).validated() {
             return (project, false)
         }
-        if let backup = try? Data(contentsOf: backupURL),
+        if let backup = try? CoordinatedFileAccess.read(backupURL, { try Data(contentsOf: $0) }),
            let recovered = try? decoder.decode(Project.self, from: backup).validated() {
             do { try AtomicFileWriter.restore(backup, to: primaryURL, using: fileManager) }
             catch { throw ProjectError.projectUnavailable(.unreadableMetadata) }
@@ -225,11 +536,126 @@ actor ProjectStore {
         throw ProjectError.projectUnavailable(.unreadableMetadata)
     }
 
-    private func validateManagedSource(_ sourceURL: URL, expectedPageCount: Int) async throws {
-        guard fileManager.isReadableFile(atPath: sourceURL.path) else {
-            throw ProjectError.projectUnavailable(.unreadableSource)
+    private func readProjectMetadata(at folder: URL, id: UUID) throws -> Project {
+        let metadata = folder.appendingPathComponent("project.json")
+        guard let data = try? Data(contentsOf: metadata),
+              let project = try? decoder.decode(Project.self, from: data).validated(),
+              project.id == id else {
+            throw ProjectError.projectUnavailable(.unreadableMetadata)
         }
+        return project
+    }
+
+    private func readProjectMetadataUncoordinated(
+        id: UUID,
+        primaryURL: URL,
+        allowBackup: Bool
+    ) -> Project? {
+        if let data = try? Data(contentsOf: primaryURL),
+           let project = try? decoder.decode(Project.self, from: data).validated(),
+           project.id == id {
+            return project
+        }
+        guard allowBackup else { return nil }
+        let backupURL = primaryURL.appendingPathExtension("bak")
+        guard let data = try? Data(contentsOf: backupURL),
+              let project = try? decoder.decode(Project.self, from: data).validated(),
+              project.id == id else { return nil }
+        return project
+    }
+
+    private func differsMeaningfully(_ lhs: Project, from rhs: Project) -> Bool {
+        // Dates are derived metadata, not user-editable project state. The
+        // ISO-8601 encoder persists whole seconds while Date can retain
+        // fractional seconds in memory, so comparing these values directly
+        // creates a false conflict after an otherwise successful save.
+        return differsInDurableContent(lhs, from: rhs)
+            || lhs.viewPreferences != rhs.viewPreferences
+    }
+
+    private func differsInDurableContent(_ lhs: Project, from rhs: Project) -> Bool {
+        // View preferences such as focus and panel visibility can race during
+        // ordinary use. Last writer wins for those; notes and selection must
+        // still be protected by the conflict copy path.
+        return lhs.schemaVersion != rhs.schemaVersion
+            || lhs.id != rhs.id
+            || lhs.name != rhs.name
+            || lhs.sourceFilename != rhs.sourceFilename
+            || lhs.pageCount != rhs.pageCount
+            || lhs.slides != rhs.slides
+    }
+
+    private func writeConflictCopy(_ project: Project, in directory: URL) throws {
+        let name = "project.conflict-\(Int(now().timeIntervalSince1970))-\(UUID().uuidString).json"
+        let url = directory.appendingPathComponent(name)
         do {
+            try AtomicFileWriter.write(encoder.encode(project), to: url, using: fileManager)
+        } catch {
+            throw ProjectError.storageFailed("Project changed since it was opened and the local conflict copy could not be saved.")
+        }
+    }
+
+    private func modifyRecentIndexLocked(
+        _ mutation: ([ProjectSummary]) throws -> RecentProjectsFile
+    ) throws -> RecentProjectsFile {
+        let indexURL = recentIndexURL
+        try fileManager.createDirectory(at: activeRootURL, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: projectsURL, withIntermediateDirectories: true)
+        do {
+            return try CoordinatedFileAccess.write(indexURL) { coordinatedURL in
+                let current = readRecentIndexUncoordinated(at: coordinatedURL) ?? RecentProjectsFile(projects: [])
+                let updated = try mutation(current.projects)
+                try AtomicFileWriter.writeUncoordinated(encoder.encode(updated), to: coordinatedURL, using: fileManager)
+                return updated
+            }
+        } catch let error as ProjectError {
+            throw error
+        } catch {
+            throw ProjectError.storageFailed("Could not save recent projects: \(error.localizedDescription)")
+        }
+    }
+
+    private func updateRecentIndex(with summary: ProjectSummary) throws {
+        _ = try modifyRecentIndexLocked { projects in
+            var reconciled = reconcileRecentIndex(RecentProjectsFile(projects: projects))
+            reconciled.projects.removeAll { $0.id == summary.id }
+            reconciled.projects.append(summary)
+            return reconciled
+        }
+    }
+
+    private func reconcileRecentIndex(
+        _ index: RecentProjectsFile,
+        projectsRoot: URL? = nil
+    ) -> RecentProjectsFile {
+        let root = projectsRoot ?? projectsURL
+        var byID = Dictionary(uniqueKeysWithValues: index.projects.map { ($0.id, $0) })
+        guard fileManager.fileExists(atPath: root.path),
+              let folders = try? fileManager.contentsOfDirectory(
+                at: root,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]
+              ) else {
+            return RecentProjectsFile(projects: Array(byID.values))
+        }
+        for folder in folders {
+            guard let id = UUID(uuidString: folder.lastPathComponent),
+                  (try? folder.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true,
+                  let project = try? readProjectMetadata(at: folder, id: id) else { continue }
+            var summary = ProjectSummary(project: project)
+            summary.availability = fileManager.fileExists(atPath: folder.appendingPathComponent("source.pdf").path)
+                ? .available
+                : .missingSource
+            byID[id] = summary
+        }
+        return RecentProjectsFile(projects: Array(byID.values))
+    }
+
+    // MARK: - Source validation and availability
+
+    private func validateManagedSource(_ sourceURL: URL, expectedPageCount: Int) async throws {
+        do {
+            try CoordinatedFileAccess.materializeIfNeeded(sourceURL, using: fileManager)
             let validation = try await validator.validate(sourceURL)
             guard validation.pageCount == expectedPageCount else {
                 throw ProjectError.projectUnavailable(.unreadableSource)
@@ -273,16 +699,18 @@ actor ProjectStore {
         return result
     }
 
-    private func updateRecentIndex(with summary: ProjectSummary) throws {
-        var index = try readRecentIndex()
-        index.projects.removeAll { $0.id == summary.id }
-        index.projects.append(summary)
-        try writeRecentIndex(index)
+    private func ensureStorageAvailable() throws {
+        if storageBlocked {
+            throw ProjectError.storageFailed(
+                "The shared Slide Learning folder is unavailable. Select it again before accessing projects."
+            )
+        }
     }
 
-    private func writeRecentIndex(_ index: RecentProjectsFile) throws {
-        do { try AtomicFileWriter.write(encoder.encode(index), to: recentIndexURL, using: fileManager) }
-        catch { throw ProjectError.storageFailed("Could not save recent projects: \(error.localizedDescription)") }
+    private func stopScopedAccess() {
+        guard let startedScopedAccessURL else { return }
+        startedScopedAccessURL.stopAccessingSecurityScopedResource()
+        self.startedScopedAccessURL = nil
     }
 
     private func cleanup(stagingURL: URL, finalURL: URL) {

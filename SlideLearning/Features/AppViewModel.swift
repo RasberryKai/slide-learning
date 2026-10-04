@@ -11,6 +11,7 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var recentProjects: [ProjectSummary] = []
     @Published private(set) var screen: Screen = .recentProjects
     @Published private(set) var activeProject: ProjectViewModel?
+    @Published private(set) var sharedLibraryStatus: SharedLibraryStatus = .local
     @Published var error: ProjectError?
 
     let store: ProjectStore
@@ -25,9 +26,61 @@ final class AppViewModel: ObservableObject {
     }
 
     func refreshRecentProjects() async {
+        sharedLibraryStatus = await store.currentSharedLibraryStatus()
         do { recentProjects = try await store.listRecentProjects() }
         catch let error as ProjectError { self.error = error }
         catch { self.error = .storageFailed(error.localizedDescription) }
+    }
+
+    /// Re-reads an open project's authoritative metadata when it is clean.
+    /// Callers can follow this with `refreshRecentProjects()` to update the
+    /// recent index in the same user action.
+    func refreshSharedLibrary() async {
+        sharedLibraryStatus = await store.currentSharedLibraryStatus()
+        _ = await activeProject?.refreshFromStoreIfClean()
+    }
+
+    /// UI integration calls this after a directory picker grants access. The
+    /// local library is copied into the selected folder and remains intact.
+    func selectSharedLibraryFolder(_ url: URL) async {
+        guard await flushActiveProjectBeforeLibrarySwitch() else { return }
+        do {
+            sharedLibraryStatus = try await store.selectSharedLibrary(at: url)
+            activeProject = nil
+            screen = .recentProjects
+            await refreshRecentProjects()
+        } catch let error as ProjectError { self.error = error }
+        catch { self.error = .storageFailed(error.localizedDescription) }
+    }
+
+    /// Restores the bookmark selected on this device. A failed bookmark is
+    /// surfaced as `.unavailable`; local projects are not shown as a fallback.
+    func restoreSharedLibrary() async {
+        guard await flushActiveProjectBeforeLibrarySwitch() else { return }
+        sharedLibraryStatus = await store.restoreSharedLibrary()
+        if case .unavailable = sharedLibraryStatus { return }
+        activeProject = nil
+        screen = .recentProjects
+        await refreshRecentProjects()
+    }
+
+    func clearSharedLibrary() async {
+        guard await flushActiveProjectBeforeLibrarySwitch() else { return }
+        await store.clearSharedLibrary()
+        sharedLibraryStatus = await store.currentSharedLibraryStatus()
+        activeProject = nil
+        screen = .recentProjects
+        await refreshRecentProjects()
+    }
+
+    /// Refreshes the active project only when it has no local edits. This is
+    /// intended for scene foreground transitions and does not clobber dirty
+    /// notes or preferences.
+    @discardableResult
+    func refreshActiveProjectIfClean() async -> Bool {
+        let refreshed = await activeProject?.refreshFromStoreIfClean() ?? true
+        if refreshed { await refreshRecentProjects() }
+        return refreshed
     }
 
     func importProject(from url: URL) async {
@@ -78,6 +131,11 @@ final class AppViewModel: ObservableObject {
     func flushActiveProject() async {
         if let pendingCloseFlush { await pendingCloseFlush.value }
         await activeProject?.flush()
+    }
+
+    private func flushActiveProjectBeforeLibrarySwitch() async -> Bool {
+        if let pendingCloseFlush { await pendingCloseFlush.value }
+        return await activeProject?.flush() ?? true
     }
 
     private var pendingCloseFlush: Task<Void, Never>?

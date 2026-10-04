@@ -50,6 +50,9 @@ enum ProjectReducer {
 
         case .setInspectorVisible(let visible):
             project.viewPreferences.inspectorVisible = visible
+
+        case .setSidebarVisible(let visible):
+            project.viewPreferences.sidebarVisible = visible
         }
         project.updatedAt = now
     }

@@ -12,6 +12,7 @@ The iPad app is a separate application target in the existing Xcode project. It 
 | Large slide with notes below | PDFKit preview and keyboard-aware notes editor | Simulator portrait/landscape checks |
 | Notes auto-select; survive deselection | Shared reducer and autosave | Shared tests and UI checks |
 | Relaunch restores edits and view preferences | Shared atomic project store; lifecycle flush | Shared persistence tests and UI checks |
+| Shared Mac/iPad project library | Choose the same user-selected iCloud Drive folder on each device; security-scoped bookmark, coordinated writes, migration, and refresh | Storage tests plus device verification |
 | Source-quality selected PDF with notes | Shared Core Graphics exporter; native share sheet | Shared PDF tests and UI export check |
 | Confirm deletion | Native confirmation before shared store deletion | Simulator UI check |
 | Preserve Mac app | Separate target and conditional image type | Mac build and regression suite |
@@ -19,19 +20,20 @@ The iPad app is a separate application target in the existing Xcode project. It 
 ## Scope
 
 - iPadOS 18+, iPad only, portrait and landscape, including resized windows.
-- Local PDF import, curation, notes, autosave, and export.
+- PDF import, curation, notes, autosave, and export using the private local library or a user-selected shared folder.
 - Native keyboard and share/Files interfaces; mockup keyboard keys are not custom UI.
 - Plain-text notes only. No drawing or PDF annotations.
-- Mac and iPad have independent local libraries. No cloud synchronization or project-transfer format.
+- Each device starts with its private local library. The user may choose the same existing `iCloud Drive/Slide Learning` folder on Mac and iPad; the app copies local projects into it and leaves local originals as a backup.
+- The app does not provide a server, account, or app-specific iCloud container. It cannot prove that an arbitrary selected folder is in iCloud Drive; the user must select it from Files on each device.
 - Device installation requires configuring signing in Xcode; simulator builds do not.
 
 ## Validation
 
-The original shared core passed all 19 tests on both Mac and iPad on 2026-09-21. These cover reducer behavior, persistence/recovery, PDF validation, vector/selectable-text export, mixed page geometry, long notes, and thumbnail cache reload. After adding a failed-save recovery regression, all 20 Mac tests passed. Back navigation now keeps unsaved edits and the workspace open when the final save fails; retry is verified to persist the note to disk before closing.
+The original shared core passed all 19 tests on both Mac and iPad on 2026-09-21. These cover reducer behavior, persistence/recovery, PDF validation, vector/selectable-text export, mixed page geometry, long notes, and thumbnail cache reload. After adding a failed-save recovery regression, all 20 Mac tests passed. Back navigation now keeps unsaved edits and the workspace open when the final save fails; retry is verified to persist the note to disk before closing. A shared-library regression covers migration retaining local originals and rejection of stale saves while preserving a conflict copy.
 
 The iPad preview now loads an independent single-page PDF representation into a fresh PDF view when focus changes. This avoids the copied-page backing lifetime implicated in the reproducible PDF accessibility crash. Accessibility remains enabled. Failed page loading clears the previous preview rather than showing it beside a different slide's notes. A rotated/cropped fixture retained its rotation, crop/media boxes, and text after page isolation.
 
-Final expanded UI and visual-review results are pending below; the deployment target alone does not establish physical-device or iPadOS 18 runtime compatibility.
+Automated builds and tests do not establish that a physical Mac and iPad use the same iCloud account, that a selected folder is actually inside iCloud Drive, or that a provider has finished downloading a PDF. Physical-device verification must cover selecting the same folder, waiting for cloud arrival, using Refresh, and deleting a shared project from either device. The deployment target alone does not establish iPadOS 18 runtime compatibility.
 
 ## Reproducing simulator UI checks
 

@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 struct IPadRecentProjectsView: View {
     @ObservedObject var model: AppViewModel
     @State private var showingImporter = false
+    @State private var showingFolderImporter = false
     @State private var isDropTargeted = false
     @State private var projectToDelete: ProjectSummary?
     @State private var isBusy = false
@@ -22,6 +23,12 @@ struct IPadRecentProjectsView: View {
                         .padding(.horizontal, 28)
                         .padding(.top, 26)
                         .padding(.bottom, 18)
+
+                    sharedLibraryStatus
+                        .frame(maxWidth: 920)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.horizontal, 28)
+                        .padding(.bottom, 12)
 
                     if model.recentProjects.isEmpty {
                         ScrollView { emptyState.padding(.horizontal, 28) }
@@ -81,6 +88,20 @@ struct IPadRecentProjectsView: View {
                 isBusy = false
             }
         }
+        .fileImporter(
+            isPresented: $showingFolderImporter,
+            allowedContentTypes: [.folder],
+            allowsMultipleSelection: false
+        ) { result in
+            guard case .success(let urls) = result, let url = urls.first else {
+                if case .failure(let error) = result,
+                   (error as NSError).code != NSUserCancelledError {
+                    model.error = .storageFailed(error.localizedDescription)
+                }
+                return
+            }
+            chooseSharedFolder(url)
+        }
         .alert(
             "Delete project?",
             isPresented: Binding(
@@ -99,7 +120,16 @@ struct IPadRecentProjectsView: View {
             }
             Button("Cancel", role: .cancel) { }
         } message: { summary in
-            Text("This removes \(summary.name) and its copied source PDF. Exported files stay on your device.")
+            Text(deleteMessage(for: summary))
+        }
+        .overlay {
+            if isBusy {
+                ProgressView("Updating library…")
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 14)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                    .shadow(radius: 8)
+            }
         }
     }
 
@@ -108,7 +138,10 @@ struct IPadRecentProjectsView: View {
             headerRow
             VStack(alignment: .leading, spacing: 15) {
                 headerTitle
-                importButton
+                HStack(spacing: 10) {
+                    sharedFolderButton
+                    importButton
+                }
             }
         }
     }
@@ -117,8 +150,28 @@ struct IPadRecentProjectsView: View {
         HStack(alignment: .bottom, spacing: 18) {
             headerTitle
             Spacer(minLength: 16)
+            sharedFolderButton
             importButton
         }
+    }
+
+    private var sharedFolderButton: some View {
+        Button {
+            guard !isBusy else { return }
+            showingFolderImporter = true
+        } label: {
+            Label(
+                model.sharedLibraryStatus.isShared ? "Change Shared Folder" : "Choose iCloud Folder",
+                systemImage: "folder.badge.cloud"
+            )
+            .font(.headline)
+            .padding(.horizontal, 4)
+        }
+        .accessibilityIdentifier("slideLearning.chooseSharedFolder")
+        .buttonStyle(.bordered)
+        .controlSize(.large)
+        .disabled(isBusy)
+        .help("Choose the iCloud Drive / Slide Learning folder shared with your other device")
     }
 
     private var headerTitle: some View {
@@ -151,6 +204,114 @@ struct IPadRecentProjectsView: View {
         .disabled(isBusy)
     }
 
+    @ViewBuilder
+    private var sharedLibraryStatus: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Image(systemName: sharedLibraryIcon)
+                    .foregroundStyle(sharedLibraryTint)
+                Text(sharedLibraryTitle)
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                Spacer()
+                Button {
+                    guard !isBusy else { return }
+                    isBusy = true
+                    Task { @MainActor in
+                        await model.refreshSharedLibrary()
+                        await model.refreshRecentProjects()
+                        isBusy = false
+                    }
+                } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
+                .foregroundStyle(.white.opacity(0.75))
+                .accessibilityLabel("Refresh shared library")
+                .help("Refresh projects and check for changes from another device")
+                .disabled(isBusy)
+            }
+            Text(sharedLibraryMessage)
+                .font(.subheadline)
+                .foregroundStyle(.white.opacity(0.68))
+            if let url = model.sharedLibraryStatus.sharedURL {
+                Text(url.path)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.white.opacity(0.52))
+                    .textSelection(.enabled)
+                    .lineLimit(2)
+            } else if case .local = model.sharedLibraryStatus {
+                Text(localLibraryPath)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.white.opacity(0.52))
+                    .textSelection(.enabled)
+                    .lineLimit(2)
+            }
+            if model.sharedLibraryStatus.isShared == false {
+                Button {
+                    showingFolderImporter = true
+                } label: {
+                    Label("Choose iCloud Folder", systemImage: "folder.badge.cloud")
+                }
+                .buttonStyle(.bordered)
+                .disabled(isBusy)
+            }
+        }
+        .padding(15)
+        .background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 16))
+        .overlay {
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(.white.opacity(0.08), lineWidth: 1)
+        }
+    }
+
+    private var sharedLibraryTitle: String {
+        switch model.sharedLibraryStatus {
+        case .local: "Local library"
+        case .shared: "Shared folder selected"
+        case .needsSelection: "Choose a shared folder"
+        case .unavailable: "Shared folder unavailable"
+        }
+    }
+
+    private var sharedLibraryIcon: String {
+        switch model.sharedLibraryStatus {
+        case .local: "internaldrive"
+        case .shared: "folder.badge.cloud"
+        case .needsSelection: "folder.badge.plus"
+        case .unavailable: "exclamationmark.triangle"
+        }
+    }
+
+    private var sharedLibraryTint: Color {
+        switch model.sharedLibraryStatus {
+        case .local: .white.opacity(0.65)
+        case .shared: .blue
+        case .needsSelection: .orange
+        case .unavailable: .red
+        }
+    }
+
+    private var sharedLibraryMessage: String {
+        switch model.sharedLibraryStatus {
+        case .local:
+            return "Projects currently stay on this iPad. Choose the same folder inside iCloud Drive on both devices to work across them."
+        case .shared:
+            return "This device reads and writes the selected folder. Choose the same iCloud Drive / Slide Learning folder on your Mac."
+        case .needsSelection:
+            return "Create or select a folder named Slide Learning inside iCloud Drive. Choose that same folder on your Mac and iPad. Existing local projects stay as a backup while they are copied."
+        case .unavailable(let message):
+            return "The previously selected shared folder cannot be opened. Choose it again; the local library is not being used silently. \(message)"
+        }
+    }
+
+    private var localLibraryPath: String {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Slide Learning", isDirectory: true)
+            .path
+    }
+
     private var emptyState: some View {
         VStack(spacing: 15) {
             Image(systemName: "rectangle.stack.badge.plus")
@@ -159,7 +320,7 @@ struct IPadRecentProjectsView: View {
             Text("No projects yet")
                 .font(.title2.weight(.semibold))
                 .foregroundStyle(.white)
-            Text("Import a PDF to start selecting slides and adding context notes.")
+            Text(emptyStateMessage)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.white.opacity(0.6))
             Button("Import PDF") {
@@ -173,6 +334,13 @@ struct IPadRecentProjectsView: View {
         .padding(.vertical, 90)
         .padding(.horizontal, 30)
         .background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 20))
+    }
+
+    private var emptyStateMessage: String {
+        if model.sharedLibraryStatus.isShared {
+            return "Import a PDF to start selecting slides and adding context notes. The project will be available on devices using this shared folder."
+        }
+        return "Choose the same folder inside iCloud Drive on both devices, then import a PDF to start selecting slides and adding context notes."
     }
 
     private func projectCard(_ summary: ProjectSummary) -> some View {
@@ -247,6 +415,24 @@ struct IPadRecentProjectsView: View {
         case .unreadableSource: "The copied source PDF cannot be read."
         case .available: ""
         }
+    }
+
+    private func chooseSharedFolder(_ url: URL) {
+        guard !isBusy else { return }
+        isBusy = true
+        Task { @MainActor in
+            await model.selectSharedLibraryFolder(url)
+            await model.refreshSharedLibrary()
+            await model.refreshRecentProjects()
+            isBusy = false
+        }
+    }
+
+    private func deleteMessage(for summary: ProjectSummary) -> String {
+        if model.sharedLibraryStatus.isShared {
+            return "This removes \(summary.name) and its PDF and notes from the selected shared folder for every device using that folder. Exported files stay on your device."
+        }
+        return "This removes \(summary.name) and its copied source PDF from this device. Exported files stay on your device."
     }
 
     private func handleDrop(_ providers: [NSItemProvider]) -> Bool {

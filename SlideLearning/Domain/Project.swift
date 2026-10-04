@@ -11,12 +11,47 @@ struct SlideState: Codable, Equatable, Sendable, Identifiable {
 struct ViewPreferences: Codable, Equatable, Sendable {
     var focusedPageIndex: Int?
     var inspectorVisible: Bool
+    var sidebarVisible: Bool
     var thumbnailSize: ThumbnailSize
     var filter: SlideFilter
+
+    private enum CodingKeys: String, CodingKey {
+        case focusedPageIndex
+        case inspectorVisible
+        case sidebarVisible
+        case thumbnailSize
+        case filter
+    }
+
+    init(
+        focusedPageIndex: Int?,
+        inspectorVisible: Bool,
+        sidebarVisible: Bool = true,
+        thumbnailSize: ThumbnailSize,
+        filter: SlideFilter
+    ) {
+        self.focusedPageIndex = focusedPageIndex
+        self.inspectorVisible = inspectorVisible
+        self.sidebarVisible = sidebarVisible
+        self.thumbnailSize = thumbnailSize
+        self.filter = filter
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        focusedPageIndex = try container.decodeIfPresent(Int.self, forKey: .focusedPageIndex)
+        inspectorVisible = try container.decode(Bool.self, forKey: .inspectorVisible)
+        // Projects written before the sidebar preference existed should keep
+        // the original always-visible layout when they are reopened.
+        sidebarVisible = try container.decodeIfPresent(Bool.self, forKey: .sidebarVisible) ?? true
+        thumbnailSize = try container.decode(ThumbnailSize.self, forKey: .thumbnailSize)
+        filter = try container.decode(SlideFilter.self, forKey: .filter)
+    }
 
     static let `default` = ViewPreferences(
         focusedPageIndex: nil,
         inspectorVisible: true,
+        sidebarVisible: true,
         thumbnailSize: .regular,
         filter: .all
     )

@@ -12,7 +12,7 @@ Lecture slide decks often contain far more material than is useful for exam-focu
 
 The app should optimize for quick curation rather than PDF editing. It must feel at home on a MacBook screen and remain efficient for typical decks of 30–90 pages.
 
-The successful outcome is a local macOS app in which the user can:
+The successful outcome is a macOS app with a matching iPad app in which the user can:
 
 1. Import one slide-deck PDF as a project.
 2. Review slides in a left thumbnail sidebar with a large active slide on the right.
@@ -20,6 +20,7 @@ The successful outcome is a local macOS app in which the user can:
 4. Add plain-text context to individual slides.
 5. Close and reopen the app without losing work.
 6. Export the selected slides and their notes as one high-quality PDF in original slide order.
+7. Continue the same project on a second device by selecting the same existing folder inside iCloud Drive on both devices.
 
 ## Product principles
 
@@ -28,11 +29,12 @@ The successful outcome is a local macOS app in which the user can:
 - **No lost work.** Projects and edits save automatically and survive app restarts.
 - **Source fidelity matters.** Exported slides should retain the quality and selectable text of the source PDF where possible; they must not become blurry screenshots.
 - **Keep the app narrow.** It prepares source material. It does not generate flashcards or own the downstream AI prompt.
-- **Local and private.** The app does not require accounts, cloud services, analytics, or network access.
+- **User-controlled storage.** The app has no account or server. Projects use the private local library by default and may use a user-selected folder inside iCloud Drive for device-to-device continuity.
 
 ## Target environment
 
 - Native macOS desktop app.
+- Matching iPadOS app, with platform-specific library and workspace views.
 - Optimized for a MacBook-sized display.
 - Typical source document: 30–90 PDF pages, usually presentation slides.
 - Personal-use v1, built and run on the user's own Mac.
@@ -48,11 +50,22 @@ On launch, show a lightweight Recent Projects screen.
 - Projects are ordered by most recently opened.
 - Each item shows the project name, source PDF name, page count, selected count, and last-updated time.
 - The primary action is **Import PDF**.
+- The Recent Projects screen exposes **Choose iCloud Folder** and shows the current local or selected shared path.
 - PDF import is available through both a file picker and drag and drop.
 - One PDF creates one project.
 - The project name defaults to the PDF filename without its extension.
 - Importing copies the PDF into the app-managed project library. The project must continue working if the original file is moved, renamed, or deleted.
 - Opening a recent project restores its selections, notes, last-focused slide, thumbnail size, notes visibility, and current filter.
+
+### Shared library setup
+
+- Each device starts with its private local library under Application Support.
+- The user can create or select an existing `iCloud Drive/Slide Learning` folder through the native folder picker on each device. The app stores a security-scoped bookmark for that device.
+- The user must select the same folder on both devices. The UI must say that choosing a folder does not prove that an arbitrary local folder is in iCloud Drive.
+- Selecting a shared folder copies existing local projects into it. The local originals remain in place as a backup; migration must not delete them.
+- The library screen shows the actual selected path, offers Refresh for cloud arrivals, and explains that upload/download delay is controlled by iCloud/File Provider.
+- If the bookmark cannot be restored, the app reports an unavailable shared folder and asks the user to choose it again. It must not silently fall back to local projects.
+- Deleting a project from a shared library requires confirmation and explains that its PDF, metadata, and notes are removed from the shared folder for every device using it. Previously exported PDFs are unaffected.
 
 ### 2. Review and curate the deck
 
@@ -135,19 +148,19 @@ Thumbnails stay in one scrollable column on the left. The active slide uses the 
 
 ## Project storage and privacy
 
-The user must not have to choose or manage a project directory.
-
-- Store projects in an app-managed location under macOS Application Support.
+- Store projects in the private app-managed location under Application Support until the user selects a shared folder. After selection, use the selected folder as the project root on that device.
+- Keep the selected folder's security-scoped bookmark in the local app container and restore it on launch or foreground.
 - Each project has a stable internal identifier and contains:
   - A private copy of the imported source PDF.
   - Project metadata, including name, source filename, page count, created time, and updated time.
   - Per-page selection state and note text.
   - Last-focused page and relevant view preferences.
 - Save state continuously and atomically so an interrupted write does not corrupt the last good project state.
-- No project data is uploaded or transmitted.
+- The app does not upload project data itself. When the user chooses an iCloud Drive folder, Apple's file provider may synchronize that folder between devices.
 - The export destination is independent from internal project storage.
 - Deleting a project requires confirmation and removes the app-managed PDF copy, selections, and notes.
 - Deleting a project does not remove PDFs previously exported elsewhere.
+- Coordinate reads and writes for file-provider URLs and retain atomic metadata backups. A missing or temporarily unavailable cloud file remains visible as unavailable until it can be refreshed.
 
 An implementation may use a simple JSON metadata file alongside the copied PDF for v1. A database is unnecessary for this scope.
 
@@ -157,6 +170,8 @@ An implementation may use a simple JSON metadata file alongside the copied PDF f
 - Reject corrupt, empty, or password-protected PDFs in v1 with a clear explanation. Password entry and decryption are out of scope.
 - If import copying fails, remove any incomplete project data and leave the source file untouched.
 - If an internal project file becomes unavailable or unreadable, keep the recent-project entry long enough to explain the problem and let the user delete it. Do not crash or silently discard project metadata.
+- If the selected shared folder cannot be resolved, show a recovery action to choose it again and keep the local backup intact.
+- If a shared PDF or metadata file is still downloading, show the unavailable state and allow Refresh; do not report it as permanently missing solely because iCloud has not finished materializing it.
 - Restore the most recent successfully saved project state after an app crash or forced quit.
 - Selection changes are immediately reversible by toggling the same slide again.
 - Notes remain stored even while their slides are deselected, protecting against accidental selection changes.
@@ -172,7 +187,7 @@ An implementation may use a simple JSON metadata file alongside the copied PDF f
 - Flashcard generation, AI prompts, AI-provider integration, or automatic upload.
 - A deck-level “Instructions for AI” page.
 - Markdown, JSON, or other sidecar exports.
-- Cloud sync, shared projects, collaboration, accounts, analytics, or network features.
+- Server sync, user accounts, real-time collaboration, analytics, or app-managed network services. File-provider synchronization of a folder explicitly selected by the user is in scope.
 - Password-protected PDF support.
 - App Store packaging, automatic updates, or public distribution work.
 
@@ -198,6 +213,10 @@ This section is guidance, not a behavioral requirement.
 - Reopening a project restores the last-focused slide and saved view settings.
 - Recent projects appear in most-recently-opened order.
 - Deleting a project requires confirmation and does not affect an exported PDF.
+- Selecting the same existing iCloud Drive folder on Mac and iPad makes projects created there visible on both devices after the provider finishes synchronizing them.
+- Selecting a shared folder copies local projects while retaining the local originals as a backup.
+- An unavailable or stale folder bookmark is explicit in the UI and never silently switches the app to a different library.
+- Shared deletion confirmation states that all devices using that shared folder will lose the project.
 
 ### Review interaction
 
@@ -257,11 +276,13 @@ Also verify:
 - Moving or deleting the originally imported PDF.
 - Canceling and failing an export without leaving partial files.
 - Deleting a project while exported documents remain intact.
+- Selecting the same shared folder on both devices, waiting for an intentionally delayed cloud arrival, and using Refresh to discover it.
+- Confirming that a selected path is shown verbatim and that an arbitrary local folder is not labeled as iCloud Drive.
+- Deleting a shared project on one device and confirming it disappears from the other after provider synchronization.
 
 ## Decisions intentionally left to the implementation agent
 
 - Exact visual styling, colors, typography, app icon, and final product name.
-- Exact internal serialization format, provided storage remains local, atomic, and migration-friendly.
+- Exact internal serialization format, provided storage remains atomic, migration-friendly, and safe for file-provider folders.
 - Exact thumbnail-cache eviction policy.
 - Exact implementation of PDF page composition, provided the export behavior and source-fidelity requirements are met.
-

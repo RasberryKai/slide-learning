@@ -28,9 +28,11 @@ struct ProjectWorkspaceView: View {
             toolbar
             Divider()
             HStack(spacing: 0) {
-                SlideGridView(model: model, thumbnailProvider: thumbnailProvider)
-                    .frame(width: model.project.viewPreferences.thumbnailSize.width + 40)
-                Divider()
+                if model.project.viewPreferences.sidebarVisible {
+                    SlideGridView(model: model, thumbnailProvider: thumbnailProvider)
+                        .frame(width: model.project.viewPreferences.thumbnailSize.width + 40)
+                    Divider()
+                }
                 InspectorView(model: model, thumbnailProvider: thumbnailProvider, notesFocused: $notesFocused)
                     .frame(minWidth: 400, maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -49,6 +51,9 @@ struct ProjectWorkspaceView: View {
             WorkspaceKeyMonitor(
                 onMove: { model.dispatch(.moveFocus($0)) },
                 onToggle: { model.dispatch(.toggleFocusedSelection) },
+                onToggleSidebar: {
+                    model.dispatch(.setSidebarVisible(!model.project.viewPreferences.sidebarVisible))
+                },
                 onType: { text in
                     guard let pageIndex = model.project.viewPreferences.focusedPageIndex,
                           let slide = model.project.slides.first(where: { $0.pageIndex == pageIndex }) else { return false }
@@ -145,6 +150,15 @@ struct ProjectWorkspaceView: View {
             }
             .buttonStyle(.borderless)
             .help(model.project.viewPreferences.inspectorVisible ? "Hide notes" : "Show notes")
+            Button {
+                model.dispatch(.setSidebarVisible(!model.project.viewPreferences.sidebarVisible))
+            } label: {
+                Image(systemName: model.project.viewPreferences.sidebarVisible ? "sidebar.left" : "sidebar.squares.leading")
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel(model.project.viewPreferences.sidebarVisible ? "Hide thumbnails" : "Show thumbnails")
+            .accessibilityIdentifier("slideLearning.sidebarToggle")
+            .help(model.project.viewPreferences.sidebarVisible ? "Hide thumbnails (⌘B)" : "Show thumbnails (⌘B)")
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 12)

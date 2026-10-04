@@ -68,12 +68,13 @@ final class ProjectStoreTests: XCTestCase {
         }
     }
 
-    private func makeStore() throws -> (ProjectStore, URL, URL) {
+    private func makeStore(
+        timestamp: Date = Date(timeIntervalSince1970: 1_700_000_000)
+    ) throws -> (ProjectStore, URL, URL) {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let source = root.appendingPathComponent("lecture.pdf")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try Data("source".utf8).write(to: source)
-        let timestamp = Date(timeIntervalSince1970: 1_700_000_000)
         return (
             ProjectStore(
                 rootURL: root.appendingPathComponent("library"),
@@ -83,6 +84,92 @@ final class ProjectStoreTests: XCTestCase {
             root,
             source
         )
+    }
+
+    func testFractionalTimestampDoesNotCreateFalseConflictOnConsecutiveSaves() async throws {
+        let timestamp = Date(timeIntervalSince1970: 1_700_000_000.987_654)
+        let (store, root, source) = try makeStore(timestamp: timestamp)
+        let original = try await store.createProject(from: source)
+
+        var firstEdit = original
+        firstEdit.slides[0].note = "First edit"
+        firstEdit.updatedAt = timestamp.addingTimeInterval(0.1)
+        try await store.save(firstEdit, expectedProject: original)
+
+        var secondEdit = firstEdit
+        secondEdit.slides[1].note = "Second edit"
+        secondEdit.updatedAt = timestamp.addingTimeInterval(0.2)
+        try await store.save(secondEdit, expectedProject: firstEdit)
+
+        let saved = try await store.loadProject(id: original.id)
+        XCTAssertEqual(saved.slides[0].note, "First edit")
+        XCTAssertEqual(saved.slides[1].note, "Second edit")
+
+        let projectFolder = root
+            .appendingPathComponent("library/Projects")
+            .appendingPathComponent(original.id.uuidString)
+        let files = try FileManager.default.contentsOfDirectory(atPath: projectFolder.path)
+        XCTAssertFalse(files.contains { $0.hasPrefix("project.conflict-") })
+    }
+
+    func testRepeatingAnAlreadySavedStateDoesNotCreateAConflict() async throws {
+        let (store, root, source) = try makeStore()
+        let original = try await store.createProject(from: source)
+        var edited = original
+        edited.slides[0].note = "Saved note"
+
+        try await store.save(edited, expectedProject: original)
+        try await store.save(edited, expectedProject: original)
+
+        let saved = try await store.loadProject(id: original.id)
+        XCTAssertEqual(saved.slides[0].note, "Saved note")
+        let folder = root.appendingPathComponent("library/Projects/\(original.id.uuidString)")
+        let files = try FileManager.default.contentsOfDirectory(atPath: folder.path)
+        XCTAssertFalse(files.contains { $0.hasPrefix("project.conflict-") })
+    }
+
+    func testStaleViewPreferencesDoNotCreateAConflictCopy() async throws {
+        let (store, root, source) = try makeStore()
+        let original = try await store.createProject(from: source)
+        var first = original
+        first.viewPreferences.inspectorVisible = false
+        try await store.save(first, expectedProject: original)
+
+        var second = original
+        second.viewPreferences.sidebarVisible = false
+        try await store.save(second, expectedProject: original)
+
+        let saved = try await store.loadProject(id: original.id)
+        XCTAssertFalse(saved.viewPreferences.sidebarVisible)
+        let folder = root.appendingPathComponent("library/Projects/\(original.id.uuidString)")
+        let files = try FileManager.default.contentsOfDirectory(atPath: folder.path)
+        XCTAssertFalse(files.contains { $0.hasPrefix("project.conflict-") })
+    }
+
+    func testSharedMigrationPreservesLocalAndRejectsStaleSave() async throws {
+        let (store, root, source) = try makeStore()
+        let original = try await store.createProject(from: source)
+        let localSource = await store.sourceURL(id: original.id)
+        let shared = root.appendingPathComponent("Slide Learning")
+        try FileManager.default.createDirectory(at: shared, withIntermediateDirectories: true)
+        _ = try await store.selectSharedLibrary(at: shared)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: localSource.path))
+        let migrated = try await store.loadProject(id: original.id)
+        XCTAssertEqual(migrated, original)
+        var remote = original
+        remote.slides[0].note = "Newer device note"
+        try await store.save(remote, expectedProject: original)
+        var stale = original
+        stale.slides[1].note = "Other device note"
+        do {
+            try await store.save(stale, expectedProject: original)
+            XCTFail("A stale save must not overwrite remote notes")
+        } catch { }
+        let current = try await store.loadProject(id: original.id)
+        XCTAssertEqual(current.slides[0].note, "Newer device note")
+        let folder = shared.appendingPathComponent("Projects").appendingPathComponent(original.id.uuidString)
+        let files = try FileManager.default.contentsOfDirectory(atPath: folder.path)
+        XCTAssertTrue(files.contains { $0.hasPrefix("project.conflict-") })
     }
 
     func testImportCopiesSourceAndSurvivesOriginalDeletion() async throws {

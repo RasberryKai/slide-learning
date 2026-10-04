@@ -4,12 +4,14 @@ import SwiftUI
 struct WorkspaceKeyMonitor: NSViewRepresentable {
     let onMove: (FocusDirection) -> Void
     let onToggle: () -> Void
+    let onToggleSidebar: () -> Void
     let onType: (String) -> Bool
 
     func makeNSView(context: Context) -> KeyMonitorView {
         let view = KeyMonitorView()
         view.onMove = onMove
         view.onToggle = onToggle
+        view.onToggleSidebar = onToggleSidebar
         view.onType = onType
         return view
     }
@@ -17,6 +19,7 @@ struct WorkspaceKeyMonitor: NSViewRepresentable {
     func updateNSView(_ nsView: KeyMonitorView, context: Context) {
         nsView.onMove = onMove
         nsView.onToggle = onToggle
+        nsView.onToggleSidebar = onToggleSidebar
         nsView.onType = onType
     }
 }
@@ -25,6 +28,7 @@ struct WorkspaceKeyMonitor: NSViewRepresentable {
 final class KeyMonitorView: NSView {
     var onMove: ((FocusDirection) -> Void)?
     var onToggle: (() -> Void)?
+    var onToggleSidebar: (() -> Void)?
     var onType: ((String) -> Bool)?
     private var monitor: Any?
 
@@ -38,6 +42,11 @@ final class KeyMonitorView: NSView {
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, let window = self.window, event.window === window,
                   window.attachedSheet == nil else { return event }
+            let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            if event.keyCode == 11, modifiers == [.command] {
+                self.onToggleSidebar?()
+                return nil
+            }
             if self.isEditingText(window.firstResponder) {
                 if event.keyCode == 53 { // Escape ends note/text editing.
                     _ = window.makeFirstResponder(nil)

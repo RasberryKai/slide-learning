@@ -43,12 +43,14 @@
 		A96D603452B728D9F4F9119A /* IPadWorkflowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A7B75DD78E02DCFF8E2AA66 /* IPadWorkflowUITests.swift */; };
 		AA521DE133E57689966D3390 /* ProjectFoundationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 070047A70817AAC5F29732B5 /* ProjectFoundationTests.swift */; };
 		ACBFBB03CC4B99BEE79234E2 /* PDFThumbnailProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C07F33D17889C649F86A49D /* PDFThumbnailProvider.swift */; };
+		AD08AB70D7EC33F3CB208CA3 /* SharedLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = D38DDD80F5F4446F47DBDB42 /* SharedLibrary.swift */; };
 		B082DE7EEE9C5F9C100744EF /* WorkspaceKeyMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7857DF038323D8DE5B2AAD1B /* WorkspaceKeyMonitor.swift */; };
 		BC3887BCD43E80B4749C0BB1 /* PDFWorkerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7A14F2E81B6975A753F0ABD /* PDFWorkerTests.swift */; };
 		C0EB1D874998AE166138A477 /* AtomicFileWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = D85C3712B997B1A689587557 /* AtomicFileWriter.swift */; };
 		C1375A6DE149952E60EF4AD2 /* AppViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20869A70D7CF81FF9DD30CE5 /* AppViewModel.swift */; };
 		C5F7A6F2CF34A14287B48D7A /* MediaProtocols.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71FD3C99E63872FB2794F3E0 /* MediaProtocols.swift */; };
 		C76462D2D9AE7C11CFDEAFF3 /* ProjectAction.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0C36ED31B6E1CC5A98C4858 /* ProjectAction.swift */; };
+		C8DAE0BA50BA71552316EBB4 /* SharedLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = D38DDD80F5F4446F47DBDB42 /* SharedLibrary.swift */; };
 		D2ED70DD614325A93CC3BEA2 /* ProjectViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39C8E59B6D6F70BC08DE4D51 /* ProjectViewModel.swift */; };
 		D4C3F874AEEC5B163E0E8A01 /* SlideLearningApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46DF633E4CB0FFCD972C52B6 /* SlideLearningApp.swift */; };
 		E1A88D7F3EA5391EAEE73715 /* ProjectWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EAB0FA1A0F424C544771423 /* ProjectWorkspaceView.swift */; };
@@ -114,6 +116,7 @@
 		C464DFF3C9963E1FF3E171A6 /* InspectorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorView.swift; sourceTree = "<group>"; };
 		C48DC01BB8F3705787C2E3CA /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		C7A14F2E81B6975A753F0ABD /* PDFWorkerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFWorkerTests.swift; sourceTree = "<group>"; };
+		D38DDD80F5F4446F47DBDB42 /* SharedLibrary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedLibrary.swift; sourceTree = "<group>"; };
 		D85C3712B997B1A689587557 /* AtomicFileWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AtomicFileWriter.swift; sourceTree = "<group>"; };
 		D8A39D0C7A8E9CB3FD6BFB58 /* ApplicationDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplicationDelegate.swift; sourceTree = "<group>"; };
 		D8B33060522DC9176E2E2D3C /* SlideCellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SlideCellView.swift; sourceTree = "<group>"; };
@@ -255,6 +258,7 @@
 				D85C3712B997B1A689587557 /* AtomicFileWriter.swift */,
 				1B0CCE89EDB370542F6F8C64 /* PDFValidating.swift */,
 				F762A3685B8C22461D6A312B /* ProjectStore.swift */,
+				D38DDD80F5F4446F47DBDB42 /* SharedLibrary.swift */,
 			);
 			path = Persistence;
 			sourceTree = "<group>";
@@ -468,6 +472,7 @@
 				377D0F1766BA683626D5A156 /* RecentProjectsView.swift in Sources */,
 				45F9FCABF277650C31C72A2E /* RootView.swift in Sources */,
 				3BEC2AA6586B1532FE2F1F3F /* SavePanelPresenter.swift in Sources */,
+				C8DAE0BA50BA71552316EBB4 /* SharedLibrary.swift in Sources */,
 				966F062DF1154B5B92445ACD /* SlideCellView.swift in Sources */,
 				701960681907D54EF29C3694 /* SlideFilter.swift in Sources */,
 				A521B6412A69CC7FBB3E1CA0 /* SlideGridView.swift in Sources */,
@@ -495,6 +500,7 @@
 				93F314226E615E96E4E268E0 /* ProjectReducer.swift in Sources */,
 				3D4A4124C68737754D4A1793 /* ProjectStore.swift in Sources */,
 				D2ED70DD614325A93CC3BEA2 /* ProjectViewModel.swift in Sources */,
+				AD08AB70D7EC33F3CB208CA3 /* SharedLibrary.swift in Sources */,
 				064A6547799FD73ABB7467FF /* SlideFilter.swift in Sources */,
 				0516F8E96C33B4AFF580D547 /* SlideLearningIPadApp.swift in Sources */,
 			);

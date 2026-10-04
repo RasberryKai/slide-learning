@@ -158,6 +158,7 @@ struct IPadProjectWorkspaceView: View {
                     .accessibilityIdentifier("slideLearning.export")
 
                     copySlideButton
+                    sidebarVisibilityButton
                     notesVisibilityButton
                 }
                 .padding(.horizontal, 2)
@@ -203,6 +204,20 @@ struct IPadProjectWorkspaceView: View {
         .buttonStyle(.bordered)
         .disabled(model.project.viewPreferences.focusedPageIndex == nil || isCopyingSlide)
         .accessibilityIdentifier("slideLearning.copySlide")
+    }
+
+    private var sidebarVisibilityButton: some View {
+        Button {
+            model.dispatch(.setSidebarVisible(!model.project.viewPreferences.sidebarVisible))
+        } label: {
+            Label(
+                model.project.viewPreferences.sidebarVisible ? "Hide Thumbnails" : "Show Thumbnails",
+                systemImage: model.project.viewPreferences.sidebarVisible ? "sidebar.left" : "sidebar.squares.leading"
+            )
+        }
+        .buttonStyle(.bordered)
+        .accessibilityIdentifier("slideLearning.sidebarToggle")
+        .keyboardShortcut("b", modifiers: [.command])
     }
 
     private func toggleNotesVisibility() {
@@ -255,15 +270,17 @@ struct IPadProjectWorkspaceView: View {
             let thumbnailWidth = max(64, sidebarWidth - 28)
 
             HStack(spacing: 0) {
-                IPadThumbnailSidebar(
-                    model: model,
-                    thumbnailProvider: thumbnailProvider,
-                    thumbnailWidth: thumbnailWidth,
-                    setWorkspaceFocus: requestWorkspaceFocus
-                )
-                .frame(width: sidebarWidth)
+                if model.project.viewPreferences.sidebarVisible {
+                    IPadThumbnailSidebar(
+                        model: model,
+                        thumbnailProvider: thumbnailProvider,
+                        thumbnailWidth: thumbnailWidth,
+                        setWorkspaceFocus: requestWorkspaceFocus
+                    )
+                    .frame(width: sidebarWidth)
 
-                Divider()
+                    Divider()
+                }
 
                 IPadSlideInspector(
                     model: model,
@@ -708,14 +725,34 @@ private struct IPadPDFPreview: UIViewRepresentable {
             return gesture
         }()
 
+        private lazy var navigationSwipeLeftGesture: UISwipeGestureRecognizer = {
+            let gesture = UISwipeGestureRecognizer(target: self, action: #selector(handleNavigationSwipe(_:)))
+            gesture.direction = .left
+            gesture.numberOfTouchesRequired = 1
+            gesture.cancelsTouchesInView = false
+            return gesture
+        }()
+
+        private lazy var navigationSwipeRightGesture: UISwipeGestureRecognizer = {
+            let gesture = UISwipeGestureRecognizer(target: self, action: #selector(handleNavigationSwipe(_:)))
+            gesture.direction = .right
+            gesture.numberOfTouchesRequired = 1
+            gesture.cancelsTouchesInView = false
+            return gesture
+        }()
+
         override init(frame: CGRect) {
             super.init(frame: frame)
             backgroundColor = .systemBackground
             clipsToBounds = true
             navigationTapGesture.delegate = self
             selectionTapGesture.delegate = self
+            navigationSwipeLeftGesture.delegate = self
+            navigationSwipeRightGesture.delegate = self
             addGestureRecognizer(navigationTapGesture)
             addGestureRecognizer(selectionTapGesture)
+            addGestureRecognizer(navigationSwipeLeftGesture)
+            addGestureRecognizer(navigationSwipeRightGesture)
         }
 
         @available(*, unavailable)
@@ -757,6 +794,26 @@ private struct IPadPDFPreview: UIViewRepresentable {
 
         @objc private func handleSelectionTap() {
             onSelectionTap?()
+        }
+
+        @objc private func handleNavigationSwipe(_ gesture: UISwipeGestureRecognizer) {
+            guard gesture.state == .ended else { return }
+            if gesture === navigationSwipeLeftGesture {
+                onNavigationTap?(.right)
+            } else if gesture === navigationSwipeRightGesture {
+                onNavigationTap?(.left)
+            }
+        }
+
+        override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard gestureRecognizer === navigationSwipeLeftGesture
+                    || gestureRecognizer === navigationSwipeRightGesture else { return true }
+            // A horizontal swipe is slide navigation only at the fitted page
+            // scale. Once the page is zoomed, PDFKit keeps the gesture for
+            // panning the page instead.
+            guard let pdfView else { return false }
+            let fitScale = max(pdfView.minScaleFactor, pdfView.scaleFactorForSizeToFit)
+            return pdfView.scaleFactor <= fitScale + 0.01
         }
 
         func gestureRecognizer(

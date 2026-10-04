@@ -26,10 +26,23 @@ struct IPadRootView: View {
                 }
             }
         }
-        .task { await model.refreshRecentProjects() }
+        .task {
+            await model.restoreSharedLibrary()
+            await model.refreshSharedLibrary()
+            await model.refreshRecentProjects()
+        }
         .onChange(of: scenePhase) { _, phase in
-            guard phase != .active else { return }
-            Task { await model.flushActiveProject() }
+            switch phase {
+            case .active:
+                Task {
+                    await model.refreshSharedLibrary()
+                    await model.refreshRecentProjects()
+                }
+            case .inactive, .background:
+                Task { await model.flushActiveProject() }
+            @unknown default:
+                break
+            }
         }
         .alert("Slide Learning", isPresented: Binding(
             get: { model.error != nil },

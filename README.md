@@ -1,6 +1,6 @@
 # Slide Learning
 
-A native macOS and iPad app for studying PDF slides. Browse a thumbnail overview, select slides, and write plain-text notes next to each slide. Projects autosave locally, and you can export selected slides with their notes as a PDF.
+A native macOS and iPad app for studying PDF slides. Browse a thumbnail overview, select slides, and write plain-text notes next to each slide. Projects autosave locally by default, or in one user-selected shared folder so work can continue between a Mac and iPad.
 
 Built with SwiftUI and PDFKit. No account or third-party dependencies required.
 
@@ -51,7 +51,23 @@ This is a local installation workflow. **Copy App** does not notarize the app fo
 - On Mac, press **⇧⌘C** (or choose **Edit → Copy Slide**) to copy the current slide as a high-resolution image, without notes. **⌘C** still copies selected text normally.
 - Export selected slides and their notes to a new PDF.
 
-Notes are separate from the source PDF; the app does not draw on or annotate the original file. On Mac, imported PDFs are copied into local project storage, alongside the autosaved project metadata, under:
+Notes are separate from the source PDF; the app does not draw on or annotate the original file.
+
+### Shared library setup
+
+The app has no server and does not silently move a local library into the cloud. To continue work between devices:
+
+1. Create or locate `iCloud Drive/Slide Learning` in Finder or Files.
+2. On each device, choose **Choose iCloud Folder** and select that same folder. The app stores a security-scoped bookmark, so the choice survives relaunches.
+3. The first selection copies existing local projects into the selected folder. Local originals remain in the device's Application Support library as a backup.
+4. The library card shows whether the app is using its local library or the selected shared path. A selected path is not proof that the folder is in iCloud Drive; choose the folder from iCloud Drive on both devices.
+5. iCloud may take time to upload or download PDFs and metadata. Use **Refresh** on the library screen after switching devices or when a project has not arrived yet.
+
+If another device has changed a project since it was opened, saving refuses to overwrite it and preserves your edits in a `project.conflict-*.json` file alongside `project.json`. Conflict recovery currently requires inspecting those files; simultaneous editing is not merged automatically.
+
+Deleting a project while a shared folder is selected removes its PDF, notes, and metadata from that shared folder for every device using it. Exported PDFs remain where they were saved.
+
+On Mac, the default local project storage is:
 
 ```text
 ~/Library/Application Support/Slide Learning/
@@ -87,9 +103,11 @@ See [FEATURE_SPEC.md](FEATURE_SPEC.md) for the detailed product specification.
 
 Select the **SlideLearningIPad** scheme in the same Xcode project, then choose an iPad simulator and run. To install on your own iPad, select that device and choose your signing team under the iPad target's **Signing & Capabilities**.
 
-The iPad interface supports portrait and landscape, Files PDF import, slide selection, plain-text notes, local autosave, and PDF sharing (including Save to Files). Tap a thumbnail to focus it; use its checkmark control to include or exclude it. Notes automatically select a slide when non-whitespace text is first entered. The notes toggle makes more room for the PDF.
+The iPad interface supports portrait and landscape, Files PDF import, slide selection, plain-text notes, local or selected-folder autosave, and PDF sharing (including Save to Files). Tap a thumbnail to focus it; use its checkmark control to include or exclude it. Notes automatically select a slide when non-whitespace text is first entered. The notes toggle makes more room for the PDF.
 
-Projects are stored privately in each app's local Application Support directory. The Mac and iPad libraries are independent; this version does not sync projects between devices.
+Each device starts with a private local Application Support library. Selecting the same folder inside iCloud Drive on both devices makes the project library shared; no paid provisioning or app-specific iCloud entitlement is required. The app uses security-scoped folder access and coordinated file writes. iCloud availability, conflict resolution by the file provider, and upload/download timing remain outside the app's control.
+
+Builds and automated tests do not prove that a physical Mac and iPad are signed into the same iCloud account or that a cloud file has finished downloading. Verify the folder choice, cross-device arrival, and cloud delay behavior on the devices you intend to use.
 
 Run the shared persistence, selection, PDF validation, export, and thumbnail tests on an iPad simulator:
 

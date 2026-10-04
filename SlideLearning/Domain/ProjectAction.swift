@@ -9,4 +9,5 @@ enum ProjectAction: Sendable {
     case setFilter(SlideFilter)
     case setThumbnailSize(ThumbnailSize)
     case setInspectorVisible(Bool)
+    case setSidebarVisible(Bool)
 }
